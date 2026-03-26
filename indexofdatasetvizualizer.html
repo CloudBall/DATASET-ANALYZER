@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>🧠 AI Data Lab PRO</title>
+
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+body { font-family: Arial; background:#0f172a; color:white; }
+.light { background:white; color:black; }
+.container { width:90%; margin:auto; }
+button, select { margin:5px; padding:8px; }
+#chart, #heatmap { height:400px; }
+.card { background:#1e293b; padding:15px; border-radius:10px; margin:10px 0; }
+.light .card { background:#f1f5f9; }
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<h1>🧠 AI Data Lab PRO</h1>
+
+<input type="file" id="fileInput" multiple>
+
+<button onclick="toggleTheme()">🌗 Toggle Theme</button>
+<button onclick="saveDashboard()">💾 Save</button>
+<button onclick="loadDashboard()">📂 Load</button>
+
+<div class="card">
+<h3>📊 Axis Builder</h3>
+<select id="xCol"></select>
+<select id="yCol"></select>
+<button onclick="plot()">Plot</button>
+<button onclick="plotAll()">Column vs ALL</button>
+</div>
+
+<div id="chart"></div>
+
+<div class="card">
+<h3>🔥 Correlation Heatmap</h3>
+<div id="heatmap"></div>
+</div>
+
+<div class="card">
+<h3>🧠 AI Insights</h3>
+<div id="insights"></div>
+</div>
+
+</div>
+
+<script>
+
+let datasets = [];
+let currentData = [];
+let headers = [];
+
+document.getElementById('fileInput').addEventListener('change', e => {
+  let files = e.target.files;
+
+  for(let file of files){
+    if(file.name.endsWith(".csv")){
+      Papa.parse(file,{
+        header:true,
+        complete: res => loadData(res.data)
+      });
+    } else {
+      let reader = new FileReader();
+      reader.onload = e => {
+        let wb = XLSX.read(e.target.result,{type:'array'});
+        let sheet = wb.Sheets[wb.SheetNames[0]];
+        loadData(XLSX.utils.sheet_to_json(sheet));
+      };
+      reader.readAsArrayBuffer(file);
+    }
+  }
+});
+
+function loadData(data){
+  datasets.push(data);
+  currentData = data;
+  headers = Object.keys(data[0]);
+  updateSelectors();
+  heatmap();
+  generateInsights();
+}
+
+function updateSelectors(){
+  let x = document.getElementById('xCol');
+  let y = document.getElementById('yCol');
+
+  x.innerHTML = y.innerHTML = "";
+
+  headers.forEach(h=>{
+    x.innerHTML += `<option>${h}</option>`;
+    y.innerHTML += `<option>${h}</option>`;
+  });
+}
+
+function plot(){
+  let xC = xCol.value;
+  let yC = yCol.value;
+
+  let x = currentData.map(d=>d[xC]);
+  let y = currentData.map(d=>d[yC]);
+
+  Plotly.newPlot('chart',[{x,y,type:'scatter',mode:'markers'}]);
+}
+
+function plotAll(){
+  let xC = xCol.value;
+  let traces = [];
+
+  headers.forEach(h=>{
+    if(h !== xC){
+      traces.push({
+        x: currentData.map(d=>d[xC]),
+        y: currentData.map(d=>d[h]),
+        mode:'lines',
+        name:h
+      });
+    }
+  });
+
+  Plotly.newPlot('chart',traces);
+}
+
+function heatmap(){
+  let nums = headers.filter(h => !isNaN(currentData[0][h]));
+
+  let z = nums.map(c1=>{
+    return nums.map(c2=>{
+      let x = currentData.map(d=>+d[c1]);
+      let y = currentData.map(d=>+d[c2]);
+      return corr(x,y);
+    });
+  });
+
+  Plotly.newPlot('heatmap',[{
+    z,x:nums,y:nums,type:'heatmap'
+  }]);
+}
+
+function corr(x,y){
+  let mx = avg(x), my = avg(y);
+  let num = 0, dx=0, dy=0;
+
+  for(let i=0;i<x.length;i++){
+    num += (x[i]-mx)*(y[i]-my);
+    dx += (x[i]-mx)**2;
+    dy += (y[i]-my)**2;
+  }
+
+  return (num/Math.sqrt(dx*dy)).toFixed(2);
+}
+
+function avg(a){ return a.reduce((s,v)=>s+v,0)/a.length; }
+
+function generateInsights(){
+  let out = "";
+  let nums = headers.filter(h => !isNaN(currentData[0][h]));
+
+  // Correlation insights
+  nums.forEach(c1=>{
+    nums.forEach(c2=>{
+      if(c1!==c2){
+        let val = corr(
+          currentData.map(d=>+d[c1]),
+          currentData.map(d=>+d[c2])
+        );
+
+        if(Math.abs(val)>0.7){
+          out += `🔥 Strong correlation: ${c1} ↔ ${c2} (${val})<br>`;
+        }
+      }
+    });
+  });
+
+  // Outlier detection
+  nums.forEach(col=>{
+    let vals = currentData.map(d=>+d[col]);
+    let mean = avg(vals);
+    let std = Math.sqrt(avg(vals.map(v=>(v-mean)**2)));
+
+    vals.forEach((v,i)=>{
+      let z = (v-mean)/std;
+      if(Math.abs(z)>2){
+        out += `⚠️ Outlier in ${col}: Row ${i} → ${v}<br>`;
+      }
+    });
+  });
+
+  // Auto graph suggestion
+  if(nums.length>=2){
+    out += `📊 Suggested: Scatter plot between ${nums[0]} and ${nums[1]}<br>`;
+  }
+
+  document.getElementById('insights').innerHTML = out;
+}
+
+// Save / Load
+function saveDashboard(){
+  localStorage.setItem("dataLab", JSON.stringify(datasets));
+  alert("Saved!");
+}
+
+function loadDashboard(){
+  let data = JSON.parse(localStorage.getItem("dataLab"));
+  if(data){
+    datasets = data;
+    currentData = data[0];
+    headers = Object.keys(currentData[0]);
+    updateSelectors();
+    heatmap();
+    generateInsights();
+  }
+}
+
+// Theme
+function toggleTheme(){
+  document.body.classList.toggle("light");
+}
+
+</script>
+
+</body>
+</html>
